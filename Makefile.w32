@@ -1,0 +1,59 @@
+PACKAGE = TBack
+DATE    ?= $(shell date +%FT%T%z)
+VERSION ?= $(shell git describe --tags --always --dirty --match=v* 2> /dev/null || \
+			cat $(CURDIR)/.version 2> /dev/null || echo v0)
+GOPATH  = $(CURDIR)/.gopath
+BIN		= $(GOPATH)/bin
+BASE    = $(GOPATH)/src/$(PACKAGE)
+PKGS     = $(or $(PKG),$(shell cd $(BASE) && env GOPATH=$(GOPATH) $(GO) list ./... | grep -v "^$(PACKAGE)/vendor/"))
+
+GO      = go
+GODOC   = godoc
+GOFMT   = gofmt
+TIMEOUT = 15
+V = 0
+Q = $(if $(filter 1,$V),,@)
+M = $(shell printf "\033[34;1m▶\033[0m")
+
+.PHONY: all
+all: fmt lint | $(BASE) ; $(info $(M) building executable…) @ ## Build program binary
+	$Q cd $(BASE) && $(GO) build -i \
+		-tags release \
+		-ldflags '-X main.Version=$(VERSION) -X main.BuildDate=$(DATE)' \
+		-o bin/$(PACKAGE) main.go
+
+$(BASE): ; $(info $(M) setting GOPATH…)
+	@mkdir -p $(dir $@)
+	@ln -sf $(CURDIR) $@
+
+
+# Tools
+
+$(BIN):
+	@mkdir -p $@
+$(BIN)/%: $(BIN) | $(BASE) ; $(info $(M) building $(REPOSITORY)…)
+	$Q tmp=$$(mktemp -d); \
+		(GOPATH=$$tmp go get $(REPOSITORY) && cp $$tmp/bin/* $(BIN)/.) || ret=$$?; \
+		rm -rf $$tmp ; exit $$ret
+
+GOLINT = $(BIN)/golint
+$(BIN)/golint: | $(BASE) ; $(info $(M) building golint…)
+	$Q go get golang.org/x/lint/golint
+
+# Tests
+
+.PHONY: lint
+lint: $(BASE) $(GOLINT) ; $(info $(M) running golint…) @ ## Run golint
+	@ret=0 && for d in $$($(GO) list -f '{{.Dir}}' ./... | grep -v /vendor/); do \
+		$(GOLINT) $$d || ret=$$? ; \
+	done ; exit $$ret
+
+.PHONY: fmt
+fmt: ; $(info $(M) running gofmt…) @ ## Run gofmt on all source files
+	@ret=0 && for d in $$($(GO) list -f '{{.Dir}}' ./... | grep -v /vendor/); do \
+		cd $$d; \
+		for f in $$($(GO) list -f '{{.GoFiles}}' $(d) | sed -e 's/^\[//g; s/$\]//g'); do \
+			$(GOFMT) -l -w $$d\\$$f || ret=$$? ; \
+		done ; \
+		cd $(CURDIR); \
+	done ; exit $$ret
